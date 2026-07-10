@@ -176,8 +176,26 @@ def redeem():
     if not code_doc:
         return jsonify({"message": "ไม่พบโค้ดนี้ในระบบ"}), 404
         
-    if code_doc.get("is_used"):
+    now_utc = datetime.now(timezone.utc)
+    
+    # ตรวจสอบการหมดอายุแบบใหม่
+    if "expires_at" in code_doc:
+        if now_utc > code_doc["expires_at"].replace(tzinfo=timezone.utc):
+            return jsonify({"message": "โค้ดนี้หมดอายุหรือหมดเวลาการใช้งานแล้ว"}), 400
+            
+    # ตรวจสอบจำนวนสิทธิ์
+    max_usages = code_doc.get("max_usages", 1)
+    used_by_list = code_doc.get("used_by_list", [])
+    
+    # ถ้าเป็นโค้ดรุ่นเก่าที่ใช้ is_used
+    if code_doc.get("is_used") and not used_by_list:
         return jsonify({"message": f"โค้ดนี้ถูกใช้งานไปแล้วเมื่อ {code_doc.get('used_at')}"}), 400
+        
+    if len(used_by_list) >= max_usages:
+        return jsonify({"message": "สิทธิ์ของโค้ดนี้เต็มจำนวนแล้ว"}), 400
+        
+    if username in used_by_list:
+        return jsonify({"message": "คุณได้ใช้งานโค้ดนี้ไปแล้ว"}), 400
         
     # 3. อัปเดตวันหมดอายุให้ User
     days_to_add = code_doc.get("days", 0)
@@ -196,9 +214,12 @@ def redeem():
     
     # 4. อัปเดตสถานะโค้ดว่าถูกใช้แล้ว
     used_time = now_utc.strftime("%Y-%m-%d %H:%M:%S")
+    used_by_list.append(username)
+    is_used_full = len(used_by_list) >= max_usages
+    
     codes_col.update_one({"_id": code_doc["_id"]}, {"$set": {
-        "is_used": True,
-        "used_by": username,
+        "is_used": is_used_full,
+        "used_by_list": used_by_list,
         "used_at": used_time
     }})
     
@@ -214,6 +235,8 @@ def generate_code():
     data = request.json
     code = data.get('code')
     days = data.get('days')
+    max_usages = data.get('max_usages', 1)
+    expires_in_hours = data.get('expires_in_hours', 24)
     
     if not code or not isinstance(days, int):
         return jsonify({"message": "กรุณาส่ง code และ days (ตัวเลข)"}), 400
@@ -223,11 +246,17 @@ def generate_code():
     if codes_col.find_one({"code": code}):
         return jsonify({"message": "โค้ดนี้มีอยู่ในระบบแล้ว"}), 400
         
+    now_utc = datetime.now(timezone.utc)
+    expires_at = now_utc + timedelta(hours=expires_in_hours)
+        
     codes_col.insert_one({
         "code": code,
         "days": days,
+        "max_usages": max_usages,
+        "expires_at": expires_at,
+        "used_by_list": [],
         "is_used": False,
-        "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        "created_at": now_utc.strftime("%Y-%m-%d %H:%M:%S")
     })
     
     return jsonify({"message": f"สร้างโค้ด {code} สำหรับเติมเวลา {days} วัน เรียบร้อยแล้ว!"})
