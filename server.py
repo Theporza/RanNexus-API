@@ -422,4 +422,5 @@ def topup_truemoney():
         return jsonify({"message": f"ไม่สามารถติดต่อระบบ TrueMoney ได้: {str(e)}"}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, use_reloader=False)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
