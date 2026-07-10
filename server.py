@@ -271,6 +271,7 @@ def get_announcements():
             "title": doc.get("title", ""),
             "content": doc.get("content", ""),
             "author": doc.get("author", "Admin"),
+            "image_url": doc.get("image_url", ""),
             "created_at": doc.get("created_at", "")
         })
     return jsonify({"announcements": results})
@@ -281,6 +282,7 @@ def create_announcement():
     title = data.get('title')
     content = data.get('content')
     author = data.get('author', 'Admin')
+    image_url = data.get('image_url', '')
     
     if not title or not content:
         return jsonify({"message": "กรุณาส่ง title และ content"}), 400
@@ -289,6 +291,7 @@ def create_announcement():
         "title": title.strip(),
         "content": content.strip(),
         "author": author.strip(),
+        "image_url": image_url.strip() if image_url else "",
         "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     })
     
