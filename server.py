@@ -14,6 +14,7 @@ client = MongoClient(uri)
 db = client['my_login_db']
 users_col = db['users']
 codes_col = db['codes']
+announcements_col = db['announcements']
 
 @app.route('/')
 def home():
@@ -230,6 +231,39 @@ def generate_code():
     })
     
     return jsonify({"message": f"สร้างโค้ด {code} สำหรับเติมเวลา {days} วัน เรียบร้อยแล้ว!"})
+
+@app.route('/announcements', methods=['GET'])
+def get_announcements():
+    # ดึงประกาศล่าสุด 10 อันดับแรก
+    docs = announcements_col.find().sort("created_at", -1).limit(10)
+    results = []
+    for doc in docs:
+        results.append({
+            "title": doc.get("title", ""),
+            "content": doc.get("content", ""),
+            "author": doc.get("author", "Admin"),
+            "created_at": doc.get("created_at", "")
+        })
+    return jsonify({"announcements": results})
+
+@app.route('/admin/announcement', methods=['POST'])
+def create_announcement():
+    data = request.json
+    title = data.get('title')
+    content = data.get('content')
+    author = data.get('author', 'Admin')
+    
+    if not title or not content:
+        return jsonify({"message": "กรุณาส่ง title และ content"}), 400
+        
+    announcements_col.insert_one({
+        "title": title.strip(),
+        "content": content.strip(),
+        "author": author.strip(),
+        "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    })
+    
+    return jsonify({"message": "สร้างประกาศเรียบร้อยแล้ว!"})
 
 if __name__ == '__main__':
     app.run(debug=True, use_reloader=False)
