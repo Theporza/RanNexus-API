@@ -265,5 +265,21 @@ def create_announcement():
     
     return jsonify({"message": "สร้างประกาศเรียบร้อยแล้ว!"})
 
+@app.route('/redeem_history/<username>', methods=['GET'])
+def get_redeem_history(username):
+    username = username.strip().lower()
+    # ดึงข้อมูลการใช้โค้ดของ user นี้ โดยเรียงจากเวลาที่ใช้ล่าสุด
+    docs = codes_col.find({"is_used": True, "used_by": username}).sort("used_at", -1)
+    
+    results = []
+    for doc in docs:
+        results.append({
+            "code": doc.get("code", ""),
+            "days": doc.get("days", 0),
+            "used_at": doc.get("used_at", "")
+        })
+        
+    return jsonify({"history": results})
+
 if __name__ == '__main__':
     app.run(debug=True, use_reloader=False)
