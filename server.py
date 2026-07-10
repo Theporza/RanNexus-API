@@ -298,7 +298,7 @@ def create_announcement():
 def get_redeem_history(username):
     username = username.strip().lower()
     # ดึงข้อมูลการใช้โค้ดของ user นี้ โดยเรียงจากเวลาที่ใช้ล่าสุด
-    docs = codes_col.find({"is_used": True, "used_by": username}).sort("used_at", -1)
+    docs = codes_col.find({"used_by_list": username}).sort("used_at", -1)
     
     results = []
     for doc in docs:
