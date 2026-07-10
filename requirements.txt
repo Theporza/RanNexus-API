@@ -3,3 +3,4 @@ pymongo==4.17.0
 bcrypt==5.0.0
 gunicorn
 dnspython
+requests
