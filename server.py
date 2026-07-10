@@ -3,10 +3,13 @@ from pymongo import MongoClient
 import bcrypt
 from datetime import datetime, timedelta, timezone
 
+import os
+
 app = Flask(__name__)
 
-# เปลี่ยน <db_password> เป็นรหัสที่คุณตั้งไว้ใน MongoDB Atlas
-uri = "mongodb+srv://lnwporza55yo_db_user:sEWbMeMVqlGhVuDX@nexusdb.i5bm9cl.mongodb.net/?appName=NexusDB"
+# ดึง URL ฐานข้อมูลจาก Environment Variable (ซ่อนรหัสผ่าน)
+uri = os.environ.get("MONGO_URI", "mongodb://localhost:27017/") # ใส่ localhost ไว้เผื่อรันในเครื่องตัวเองเฉยๆ
+
 client = MongoClient(uri)
 db = client['my_login_db']
 users_col = db['users']
