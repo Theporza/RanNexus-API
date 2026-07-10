@@ -13,6 +13,7 @@ uri = os.environ.get("MONGO_URI", "mongodb://localhost:27017/") # ใส่ loca
 client = MongoClient(uri)
 db = client['my_login_db']
 users_col = db['users']
+codes_col = db['codes']
 
 @app.route('/')
 def home():
@@ -43,7 +44,7 @@ def status():
             latest_time = doc["_id"].generation_time.astimezone().strftime("%Y-%m-%d %H:%M:%S")
 
     return jsonify({
-        "version": "1.0.1",
+        "version": "1.0.0",
         "total_users": total_users,
         "online_users": online_users,
         "latest_user": latest_username,
@@ -151,6 +152,84 @@ def logout():
     username = username.strip().lower()
     users_col.update_one({"username": username}, {"$set": {"is_online": False}})
     return jsonify({"message": "ออกจากระบบสำเร็จ!"})
+
+@app.route('/redeem', methods=['POST'])
+def redeem():
+    data = request.json
+    username = data.get('username')
+    code = data.get('code')
+    
+    if not username or not code:
+        return jsonify({"message": "ข้อมูลไม่ครบถ้วน (ต้องการ Username และ Code)"}), 400
+        
+    username = username.strip().lower()
+    code = code.strip()
+    
+    # 1. เช็คว่ามีผู้ใช้นี้อยู่ไหม
+    user = users_col.find_one({"username": username})
+    if not user:
+        return jsonify({"message": "ไม่พบผู้ใช้งานนี้ในระบบ"}), 404
+        
+    # 2. เช็คว่าโค้ดนี้มีอยู่ในระบบและยังไม่ถูกใช้หรือไม่
+    code_doc = codes_col.find_one({"code": code})
+    if not code_doc:
+        return jsonify({"message": "ไม่พบโค้ดนี้ในระบบ"}), 404
+        
+    if code_doc.get("is_used"):
+        return jsonify({"message": f"โค้ดนี้ถูกใช้งานไปแล้วเมื่อ {code_doc.get('used_at')}"}), 400
+        
+    # 3. อัปเดตวันหมดอายุให้ User
+    days_to_add = code_doc.get("days", 0)
+    current_expire = user.get("expire_date")
+    
+    now_utc = datetime.now(timezone.utc)
+    
+    if not current_expire or current_expire.replace(tzinfo=timezone.utc) < now_utc:
+        # ถ้าไม่มีวันหมดอายุ หรือหมดอายุไปแล้ว ให้นับเริ่มจากตอนนี้
+        new_expire = now_utc + timedelta(days=days_to_add)
+    else:
+        # ถ้ายังมีเวลาเหลืออยู่ ให้บวกเพิ่มเข้าไปจากเดิม
+        new_expire = current_expire.replace(tzinfo=timezone.utc) + timedelta(days=days_to_add)
+        
+    users_col.update_one({"_id": user["_id"]}, {"$set": {"expire_date": new_expire}})
+    
+    # 4. อัปเดตสถานะโค้ดว่าถูกใช้แล้ว
+    used_time = now_utc.strftime("%Y-%m-%d %H:%M:%S")
+    codes_col.update_one({"_id": code_doc["_id"]}, {"$set": {
+        "is_used": True,
+        "used_by": username,
+        "used_at": used_time
+    }})
+    
+    return jsonify({
+        "message": "เติมเวลาใช้งานสำเร็จ!",
+        "new_expire_date": new_expire.isoformat(),
+        "days_added": days_to_add
+    })
+
+@app.route('/admin/generate_code', methods=['POST'])
+def generate_code():
+    # ในอนาคตคุณสามารถเพิ่มการเช็คสิทธิ์ admin_hwid หรือรหัสผ่านก่อนเพื่อความปลอดภัย
+    data = request.json
+    code = data.get('code')
+    days = data.get('days')
+    
+    if not code or not isinstance(days, int):
+        return jsonify({"message": "กรุณาส่ง code และ days (ตัวเลข)"}), 400
+        
+    code = code.strip()
+    
+    if codes_col.find_one({"code": code}):
+        return jsonify({"message": "โค้ดนี้มีอยู่ในระบบแล้ว"}), 400
+        
+    codes_col.insert_one({
+        "code": code,
+        "days": days,
+        "is_used": False,
+        "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    })
+    
+    return jsonify({"message": f"สร้างโค้ด {code} สำหรับเติมเวลา {days} วัน เรียบร้อยแล้ว!"})
 
 if __name__ == '__main__':
     app.run(debug=True, use_reloader=False)
