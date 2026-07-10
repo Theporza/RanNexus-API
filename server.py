@@ -2,6 +2,8 @@ from flask import Flask, request, jsonify
 from pymongo import MongoClient
 import bcrypt
 from datetime import datetime, timedelta, timezone
+import requests
+import re
 
 import os
 
@@ -312,6 +314,112 @@ def get_redeem_history(username):
         })
         
     return jsonify({"history": results})
+
+@app.route('/topup/truemoney', methods=['POST'])
+def topup_truemoney():
+    data = request.json
+    username = data.get('username')
+    link = data.get('link')
+    
+    # ----------------------------------------------------
+    # TODO: เปลี่ยนเป็นเบอร์โทรศัพท์ทรูมันนี่ของแอดมินเพื่อรับเงิน
+    # ----------------------------------------------------
+    ADMIN_PHONE = "0968404730" 
+    
+    if not username or not link:
+        return jsonify({"message": "กรุณาส่งข้อมูลให้ครบถ้วน"}), 400
+        
+    username = username.strip().lower()
+    link = link.strip()
+    
+    # 1. ตรวจสอบ user
+    user = users_col.find_one({"username": username})
+    if not user:
+        return jsonify({"message": "ไม่พบผู้ใช้งานนี้ในระบบ"}), 404
+        
+    # 2. แกะ voucher_hash ออกจากลิงก์
+    match = re.search(r'v=([a-zA-Z0-9]+)', link)
+    if not match:
+        return jsonify({"message": "รูปแบบลิงก์ซองของขวัญไม่ถูกต้อง (ต้องเป็นลิงก์ทรูมันนี่)"}), 400
+    voucher_hash = match.group(1)
+    
+    # 3. เช็คประวัติการรับซอง (กันซ้ำซ้อน)
+    topups_col = db['topups']
+    if topups_col.find_one({"voucher_hash": voucher_hash}):
+        return jsonify({"message": "ซองของขวัญนี้ถูกเติมเข้าระบบไปแล้ว!"}), 400
+        
+    # 4. ยิง API ไปที่ TrueMoney
+    try:
+        url = f"https://gift.truemoney.com/campaign/vouchers/{voucher_hash}/redeem"
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+        }
+        payload = {
+            "mobile": ADMIN_PHONE,
+            "voucher_hash": voucher_hash
+        }
+        res = requests.post(url, json=payload, headers=headers, timeout=15)
+        res_data = res.json()
+        
+        status_code = res_data.get("status", {}).get("code")
+        
+        if status_code == "SUCCESS":
+            # สำเร็จ ได้รับเงิน
+            amount_str = res_data.get("data", {}).get("my_ticket", {}).get("amount_baht", "0")
+            amount = float(amount_str)
+            
+            # คำนวณวันตามแพ็กเกจ
+            days_to_add = 0
+            if amount == 499:
+                days_to_add = 30
+            elif amount == 299:
+                days_to_add = 15
+            elif amount == 159:
+                days_to_add = 7
+            else:
+                # กรณีเงินไม่ตรงแพ็กเกจ ให้คำนวณตามสัดส่วน (เฉลี่ย 159 บาท = 7 วัน -> ~22.71 บาท/วัน)
+                if amount >= 159:
+                    days_to_add = int((amount / 159) * 7)
+                else:
+                    days_to_add = int(amount / 22.71)
+            
+            # ถ้ายอดน้อยเกินกว่าจะได้ 1 วัน
+            if days_to_add <= 0:
+                # ระบบดึงเงินเข้ากระเป๋าแอดมินไปแล้ว เลยให้ไปเลย 1 วันเป็นขั้นต่ำสุด
+                days_to_add = 1
+                
+            # เพิ่มวัน
+            current_expire = user.get("expire_date")
+            now_utc = datetime.now(timezone.utc)
+            if not current_expire or current_expire.replace(tzinfo=timezone.utc) < now_utc:
+                new_expire = now_utc + timedelta(days=days_to_add)
+            else:
+                new_expire = current_expire.replace(tzinfo=timezone.utc) + timedelta(days=days_to_add)
+                
+            users_col.update_one({"_id": user["_id"]}, {"$set": {"expire_date": new_expire}})
+            
+            # บันทึกประวัติการเติม
+            topups_col.insert_one({
+                "username": username,
+                "voucher_hash": voucher_hash,
+                "amount": amount,
+                "days_added": days_to_add,
+                "created_at": now_utc.strftime("%Y-%m-%d %H:%M:%S")
+            })
+            
+            return jsonify({
+                "message": f"เติมเงินสำเร็จ! ยอด {amount} บาท (เพิ่ม {days_to_add} วัน)",
+                "days_added": days_to_add,
+                "new_expire_date": new_expire.isoformat()
+            })
+        else:
+            # รับเงินไม่ได้
+            msg = res_data.get("status", {}).get("message", "เกิดข้อผิดพลาดในการรับซอง")
+            return jsonify({"message": f"รับซองไม่สำเร็จ: {msg}"}), 400
+            
+    except Exception as e:
+        return jsonify({"message": f"ไม่สามารถติดต่อระบบ TrueMoney ได้: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, use_reloader=False)
